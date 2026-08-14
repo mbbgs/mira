@@ -1,0 +1,51 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.0"
+          channel: stable
+          cache: true
+
+      - name: Generate platform scaffolding (one-time)
+        run: flutter create --platforms=android . --project-name govin
+
+      - name: Commit generated platform files
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "Add generated Flutter platform scaffolding"
+          file_pattern: "android/*"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+        continue-on-error: true # don't block APK output on lint warnings while iterating
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: govin-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
