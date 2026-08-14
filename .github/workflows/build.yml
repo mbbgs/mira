@@ -24,16 +24,6 @@ jobs:
           flutter-version: "3.44.0"
           channel: stable
           cache: true
-
-      - name: Generate platform scaffolding (one-time)
-        run: flutter create --platforms=android . --project-name govin
-
-      - name: Commit generated platform files
-        uses: stefanzweifel/git-auto-commit-action@v7
-        with:
-          commit_message: "Add generated Flutter platform scaffolding"
-          file_pattern: "android/*"
-
       - name: Install dependencies
         run: flutter pub get
 
