@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'file_explorer_screen.dart';
+import 'ide_shell_screen.dart';
 
 void main() {
   runApp(const GovinApp());
@@ -18,9 +18,8 @@ class GovinApp extends StatelessWidget {
   }
 }
 
-// One-time host entry, then straight into the file explorer as the
-// app's home screen. Terminal and other utilities are reachable from
-// the file explorer's side drawer.
+// One-time host entry, then straight into the IDE shell: file tree +
+// tabs + editor, all visible together.
 class HostEntryPage extends StatefulWidget {
   const HostEntryPage({super.key});
 
@@ -43,7 +42,7 @@ class _HostEntryPageState extends State<HostEntryPage> {
     if (host.isEmpty) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => FileExplorerScreen(host: host),
+        builder: (_) => IdeShellScreen(host: host),
       ),
     );
   }
