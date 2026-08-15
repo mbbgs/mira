@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -10,9 +11,9 @@ import 'lsp_client.dart';
 // Real file editor: loads content from the backend (/files/read), lets
 // you edit with Go syntax highlighting, saves back (/files/write).
 // The LSP connection to gopls opens automatically as soon as this screen
-// loads — no separate "connect" step. LSP messages are received and
-// logged for now; wiring diagnostics/completion into the UI is the next
-// piece of work, not this one.
+// loads — no separate "connect" step. Diagnostics show as a red banner;
+// completions show as a popup list below the cursor line, driven by real
+// textDocument/completion requests to gopls.
 class CodeEditorScreen extends StatefulWidget {
   final String host;
   final String filePath;
@@ -34,13 +35,103 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
   LspClient? _lsp;
   String _lspStatus = 'connecting...';
   List<dynamic> _diagnostics = [];
+  List<dynamic> _completions = [];
+  Timer? _debounce;
+  int _docVersion = 1;
+  String get _fileUri => 'file://${widget.filePath}';
 
   @override
   void initState() {
     super.initState();
     _controller = CodeController(text: '', language: go);
+    _controller.addListener(_onTextChanged);
     _loadFile();
     _connectLsp();
+  }
+
+  void _onTextChanged() {
+    final lsp = _lsp;
+    if (lsp == null) return;
+    _docVersion++;
+    lsp.didChange(_fileUri, _docVersion, _controller.fullText);
+
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _requestCompletion);
+  }
+
+  // Converts a character offset in the text into 0-indexed {line, character}
+  // as LSP expects. character is a UTF-16 code-unit count within the line —
+  // Dart strings are already UTF-16 internally, so .length here is correct.
+  ({int line, int character}) _offsetToPosition(String text, int offset) {
+    var line = 0;
+    var lastNewline = -1;
+    for (var i = 0; i < offset && i < text.length; i++) {
+      if (text[i] == '\n') {
+        line++;
+        lastNewline = i;
+      }
+    }
+    final character = offset - lastNewline - 1;
+    return (line: line, character: character);
+  }
+
+  Future<void> _requestCompletion() async {
+    final lsp = _lsp;
+    if (lsp == null) return;
+    final selection = _controller.selection;
+    if (!selection.isValid || !selection.isCollapsed) {
+      if (mounted) setState(() => _completions = []);
+      return;
+    }
+    final text = _controller.fullText;
+    final pos = _offsetToPosition(text, selection.baseOffset);
+    try {
+      final items = await lsp.completion(_fileUri, pos.line, pos.character);
+      if (mounted) setState(() => _completions = items);
+    } catch (_) {
+      // Timed-out or errored completion request — just show nothing
+      // rather than surface a popup error for a background feature.
+      if (mounted) setState(() => _completions = []);
+    }
+  }
+
+  void _applyCompletion(Map item) {
+    final label = item['label'] as String? ?? '';
+    // insertText, when present, is what should actually be typed; falls
+    // back to label if the server didn't provide one, per spec.
+    final insertText = item['insertText'] as String? ?? label;
+    if (insertText.isEmpty) return;
+
+    final selection = _controller.selection;
+    if (!selection.isValid) return;
+    final text = _controller.fullText;
+    final offset = selection.baseOffset;
+
+    // Replace the partial word being typed (back to the last
+    // non-identifier character) with the chosen completion.
+    var start = offset;
+    while (start > 0 && _isIdentifierChar(text[start - 1])) {
+      start--;
+    }
+    final newText = text.replaceRange(start, offset, insertText);
+    final newOffset = start + insertText.length;
+
+    _controller.removeListener(_onTextChanged); // avoid recursive trigger
+    _controller.fullText = newText;
+    _controller.selection = TextSelection.collapsed(offset: newOffset);
+    _controller.addListener(_onTextChanged);
+
+    setState(() => _completions = []);
+
+    final lsp = _lsp;
+    if (lsp != null) {
+      _docVersion++;
+      lsp.didChange(_fileUri, _docVersion, _controller.fullText);
+    }
+  }
+
+  bool _isIdentifierChar(String ch) {
+    return RegExp(r'[A-Za-z0-9_]').hasMatch(ch);
   }
 
   Future<void> _loadFile() async {
@@ -127,6 +218,8 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _controller.removeListener(_onTextChanged);
     _lsp?.dispose();
     _controller.dispose();
     super.dispose();
@@ -206,6 +299,53 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
                         ),
                       ),
                     ),
+                    if (_completions.isNotEmpty)
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 180),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF272822), // matches monokai bg
+                          border: Border(
+                            top: BorderSide(color: Colors.grey.shade800),
+                          ),
+                        ),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _completions.length,
+                          itemBuilder: (context, i) {
+                            final item = _completions[i] as Map;
+                            final label = item['label'] as String? ?? '';
+                            final detail = item['detail'] as String?;
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(
+                                Icons.code,
+                                size: 16,
+                                color: Colors.tealAccent,
+                              ),
+                              title: Text(
+                                label,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              subtitle: detail != null
+                                  ? Text(
+                                      detail,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade400,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    )
+                                  : null,
+                              onTap: () => _applyCompletion(item),
+                            );
+                          },
+                        ),
+                      ),
                   ],
                 ),
     );

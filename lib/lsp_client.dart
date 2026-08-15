@@ -16,7 +16,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 // that handshake plus basic request/response + diagnostics handling.
 class LspClient {
   final WebSocketChannel channel;
-  final _pending = <int, Completer<Map<String, dynamic>>>{};
+  final _pending = <int, Completer<dynamic>>{};
   int _nextId = 1;
   final _buffer = BytesBuilder();
   bool _initialized = false;
@@ -34,13 +34,16 @@ class LspClient {
 
   Future<void> initialize({required String rootUri}) async {
     onStatus?.call('handshaking...');
-    final result = await _request('initialize', {
+    await _request('initialize', {
       'processId': null,
       'rootUri': rootUri,
       'capabilities': {
         'textDocument': {
           'synchronization': {'didSave': true},
           'publishDiagnostics': {},
+          'completion': {
+            'completionItem': {'snippetSupport': false},
+          },
         },
       },
     });
@@ -49,10 +52,6 @@ class LspClient {
     _notify('initialized', {});
     _initialized = true;
     onStatus?.call('connected');
-    // result is the server's capabilities; not used yet, but confirms
-    // the handshake completed rather than just assuming.
-    // ignore: unnecessary_statements
-    result;
   }
 
   void didOpen(String uri, String languageId, String text) {
@@ -84,6 +83,26 @@ class LspClient {
     });
   }
 
+  /// Requests completions at the given 0-indexed line/character position.
+  /// Returns the raw list of CompletionItem objects from gopls (each has
+  /// at minimum a 'label', often 'detail' and 'kind' too).
+  Future<List<dynamic>> completion(String uri, int line, int character) async {
+    if (!_initialized) return [];
+    final result = await _requestRaw('textDocument/completion', {
+      'textDocument': {'uri': uri},
+      'position': {'line': line, 'character': character},
+      'context': {'triggerKind': 1}, // 1 = Invoked
+    });
+    // Per spec, result is either CompletionItem[] directly, a
+    // CompletionList {isIncomplete, items}, or null.
+    if (result == null) return [];
+    if (result is List) return result;
+    if (result is Map && result['items'] is List) {
+      return result['items'] as List<dynamic>;
+    }
+    return [];
+  }
+
   void dispose() {
     channel.sink.close();
   }
@@ -92,14 +111,24 @@ class LspClient {
 
   int _idCounter() => _nextId++;
 
-  Future<Map<String, dynamic>> _request(
-      String method, Map<String, dynamic> params) {
+  Future<dynamic> _request(String method, Map<String, dynamic> params) {
     final id = _idCounter();
-    final completer = Completer<Map<String, dynamic>>();
+    final completer = Completer<dynamic>();
     _pending[id] = completer;
     _send({'jsonrpc': '2.0', 'id': id, 'method': method, 'params': params});
-    return completer.future;
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _pending.remove(id);
+        throw TimeoutException('LSP request "$method" timed out');
+      },
+    );
   }
+
+  /// Alias kept for readability at call sites that expect a possibly
+  /// non-Map result (e.g. completion, which can return a raw array).
+  Future<dynamic> _requestRaw(String method, Map<String, dynamic> params) =>
+      _request(method, params);
 
   void _notify(String method, Map<String, dynamic> params) {
     _send({'jsonrpc': '2.0', 'method': method, 'params': params});
@@ -187,7 +216,7 @@ class LspClient {
       if (msg.containsKey('error')) {
         completer.completeError(Exception(msg['error'].toString()));
       } else {
-        completer.complete((msg['result'] as Map?)?.cast<String, dynamic>() ?? {});
+        completer.complete(msg['result']);
       }
       return;
     }
