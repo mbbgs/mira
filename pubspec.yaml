@@ -1,5 +1,5 @@
-name: DIDE
-description: Go IDE frontend - Flutter client for DIDE
+name: govin
+description: Go IDE frontend - Flutter client for idebackend
 publish_to: "none"
 version: 0.1.0
 
@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   web_socket_channel: ^3.0.3
   xterm2: ^5.2.0
+  flutter_code_editor: ^0.3.5
 
 dev_dependencies:
   flutter_lints: ^5.0.0

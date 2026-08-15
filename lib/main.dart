@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'terminal_screen.dart';
+import 'code_editor_screen.dart';
 
 void main() {
-  runApp(const DIDEApp());
+  runApp(const GovinApp());
 }
 
-class DIDEApp extends StatelessWidget {
-  const DIDEApp({super.key});
+class GovinApp extends StatelessWidget {
+  const GovinApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'DIDE',
+      title: 'govin',
       theme: ThemeData.dark(useMaterial3: true),
       home: const HostEntryPage(),
     );
@@ -50,7 +51,7 @@ class _HostEntryPageState extends State<HostEntryPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('DIDE')),
+      appBar: AppBar(title: const Text('govin')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -68,6 +69,17 @@ class _HostEntryPageState extends State<HostEntryPage> {
             ElevatedButton(
               onPressed: _openTerminal,
               child: const Text('Open terminal'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const CodeEditorScreen(),
+                  ),
+                );
+              },
+              child: const Text('Open editor (test)'),
             ),
           ],
         ),
