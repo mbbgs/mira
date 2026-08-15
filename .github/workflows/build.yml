@@ -1,4 +1,4 @@
-name: Build APK IDE
+name: Build APK
 
 on:
   push:
@@ -24,6 +24,7 @@ jobs:
           flutter-version: "3.44.0"
           channel: stable
           cache: true
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -31,11 +32,11 @@ jobs:
         run: flutter analyze
         continue-on-error: true # don't block APK output on lint warnings while iterating
 
-      - name: Build debug APK
-        run: flutter build apk --debug
+      - name: Build release APK (per-ABI, smaller downloads)
+        run: flutter build apk --release --split-per-abi
 
-      - name: Upload APK artifact
+      - name: Upload arm32 APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DIDE-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: govin-armeabi-v7a-release-apk
+          path: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
