@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'terminal_screen.dart';
-import 'code_editor_screen.dart';
+import 'file_explorer_screen.dart';
 
 void main() {
   runApp(const GovinApp());
@@ -19,8 +18,9 @@ class GovinApp extends StatelessWidget {
   }
 }
 
-// Simple entry screen: type the backend host:port, then open a real
-// terminal (xterm2-backed) connected to it over /shell.
+// One-time host entry, then straight into the file explorer as the
+// app's home screen. Terminal and other utilities are reachable from
+// the file explorer's side drawer.
 class HostEntryPage extends StatefulWidget {
   const HostEntryPage({super.key});
 
@@ -38,12 +38,12 @@ class _HostEntryPageState extends State<HostEntryPage> {
     super.dispose();
   }
 
-  void _openTerminal() {
+  void _open() {
     final host = _hostController.text.trim();
     if (host.isEmpty) return;
-    Navigator.of(context).push(
+    Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => TerminalScreen(host: host),
+        builder: (_) => FileExplorerScreen(host: host),
       ),
     );
   }
@@ -63,23 +63,12 @@ class _HostEntryPageState extends State<HostEntryPage> {
                 labelText: 'backend host:port',
                 border: OutlineInputBorder(),
               ),
-              onSubmitted: (_) => _openTerminal(),
+              onSubmitted: (_) => _open(),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
-              onPressed: _openTerminal,
-              child: const Text('Open terminal'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const CodeEditorScreen(),
-                  ),
-                );
-              },
-              child: const Text('Open editor (test)'),
+              onPressed: _open,
+              child: const Text('Open project'),
             ),
           ],
         ),

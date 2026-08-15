@@ -93,7 +93,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('DIDE — ${widget.host}'),
+        title: Text('govin — ${widget.host}'),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
