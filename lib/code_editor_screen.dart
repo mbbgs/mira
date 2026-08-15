@@ -5,6 +5,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter_code_editor/flutter_code_editor.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
 import 'package:highlight/languages/go.dart';
+import 'lsp_client.dart';
 
 // Real file editor: loads content from the backend (/files/read), lets
 // you edit with Go syntax highlighting, saves back (/files/write).
@@ -30,8 +31,9 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
   bool _loading = true;
   bool _saving = false;
   String? _error;
-  WebSocketChannel? _lspChannel;
+  LspClient? _lsp;
   String _lspStatus = 'connecting...';
+  List<dynamic> _diagnostics = [];
 
   @override
   void initState() {
@@ -97,38 +99,35 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
 
   // Opens automatically when the screen loads — this is the "no buttons"
   // part. dir= is the file's containing folder so gopls resolves the
-  // right module/package context for it.
-  void _connectLsp() {
+  // right module/package context for it. Does the real LSP handshake
+  // (initialize -> initialized) before treating the connection as ready.
+  void _connectLsp() async {
     final dir = widget.filePath.contains('/')
         ? widget.filePath.substring(0, widget.filePath.lastIndexOf('/'))
         : widget.filePath;
     final uri = Uri.parse('ws://${widget.host}/lsp?dir=$dir');
     try {
       final channel = WebSocketChannel.connect(uri);
-      _lspChannel = channel;
-      channel.stream.listen(
-        (data) {
-          // gopls speaks raw LSP JSON-RPC (Content-Length framed) here.
-          // Parsing that into diagnostics/completion UI is the next
-          // piece of work; for now this just confirms the connection is
-          // alive so the status indicator is honest.
-          if (mounted) setState(() => _lspStatus = 'connected');
+      final lsp = LspClient(
+        channel,
+        onStatus: (status) {
+          if (mounted) setState(() => _lspStatus = status);
         },
-        onError: (e) {
-          if (mounted) setState(() => _lspStatus = 'error: $e');
-        },
-        onDone: () {
-          if (mounted) setState(() => _lspStatus = 'disconnected');
+        onDiagnostics: (fileUri, diags) {
+          if (mounted) setState(() => _diagnostics = diags);
         },
       );
+      _lsp = lsp;
+      await lsp.initialize(rootUri: 'file://$dir');
+      lsp.didOpen('file://${widget.filePath}', 'go', _controller.fullText);
     } catch (e) {
-      setState(() => _lspStatus = 'connect failed: $e');
+      if (mounted) setState(() => _lspStatus = 'connect failed: $e');
     }
   }
 
   @override
   void dispose() {
-    _lspChannel?.sink.close();
+    _lsp?.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -172,17 +171,42 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(child: Text('Failed to load file:\n$_error'))
-              : SingleChildScrollView(
-                  child: CodeTheme(
-                    data: CodeThemeData(styles: monokaiSublimeTheme),
-                    child: CodeField(
-                      controller: _controller,
-                      textStyle: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 14,
+              : Column(
+                  children: [
+                    if (_diagnostics.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        color: Colors.red.withValues(alpha: 0.15),
+                        padding: const EdgeInsets.all(8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: _diagnostics.map((d) {
+                            final msg = (d as Map)['message'] as String? ?? '';
+                            final line = ((d['range'] as Map?)?['start']
+                                    as Map?)?['line'] as int?;
+                            return Text(
+                              'Line ${(line ?? 0) + 1}: $msg',
+                              style: const TextStyle(
+                                  color: Colors.redAccent, fontSize: 12),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: CodeTheme(
+                          data: CodeThemeData(styles: monokaiSublimeTheme),
+                          child: CodeField(
+                            controller: _controller,
+                            textStyle: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
     );
   }
