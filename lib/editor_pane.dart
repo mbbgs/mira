@@ -46,6 +46,15 @@ class EditorPaneState extends State<EditorPane> {
   int _docVersion = 1;
   String get _fileUri => 'file://${widget.filePath}';
 
+  final LayerLink _editorLayerLink = LayerLink();
+  OverlayEntry? _completionOverlay;
+  Offset _completionOffset = Offset.zero;
+
+  static const _fontSize = 12.0;
+  static const _fontFamily = 'monospace';
+  static const _lineHeight = _fontSize * 1.4; // matches default TextStyle height used below
+  static const _gutterWidth = 32.0 + 4.0; // GutterStyle width + margin, from the CodeField below
+
   bool get isSaving => _saving;
 
   @override
@@ -85,16 +94,114 @@ class EditorPaneState extends State<EditorPane> {
     if (lsp == null) return;
     final selection = _controller.selection;
     if (!selection.isValid || !selection.isCollapsed) {
-      if (mounted) setState(() => _completions = []);
+      _hideCompletionOverlay();
       return;
     }
     final text = _controller.fullText;
     final pos = _offsetToPosition(text, selection.baseOffset);
     try {
       final items = await lsp.completion(_fileUri, pos.line, pos.character);
-      if (mounted) setState(() => _completions = items);
+      if (!mounted) return;
+      _completions = items;
+      if (items.isEmpty) {
+        _hideCompletionOverlay();
+      } else {
+        _updateCompletionPosition(text, selection.baseOffset);
+        _showCompletionOverlay();
+      }
     } catch (_) {
-      if (mounted) setState(() => _completions = []);
+      _hideCompletionOverlay();
+    }
+  }
+
+  // Uses TextPainter — Flutter's real text-measurement API — to compute
+  // the pixel width of the current line up to the cursor, so the
+  // popup lands directly under the caret rather than at a guessed spot.
+  // This is exact for our case because the editor uses a fixed-size
+  // monospace font, so per-character width is uniform and measurable.
+  void _updateCompletionPosition(String text, int offset) {
+    final pos = _offsetToPosition(text, offset);
+    final lineStart = offset - pos.character;
+    final lineText = text.substring(
+      lineStart.clamp(0, text.length),
+      offset.clamp(0, text.length),
+    );
+    final painter = TextPainter(
+      text: TextSpan(
+        text: lineText,
+        style: const TextStyle(fontFamily: _fontFamily, fontSize: _fontSize),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    setState(() {
+      _completionOffset = Offset(
+        _gutterWidth + painter.width,
+        (pos.line + 1) * _lineHeight,
+      );
+    });
+  }
+
+  void _showCompletionOverlay() {
+    _completionOverlay?.remove();
+    _completionOverlay = OverlayEntry(
+      builder: (context) => Positioned(
+        width: 260,
+        child: CompositedTransformFollower(
+          link: _editorLayerLink,
+          showWhenUnlinked: false,
+          offset: _completionOffset,
+          child: Material(
+            elevation: 6,
+            color: const Color(0xFF272822),
+            borderRadius: BorderRadius.circular(4),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: _completions.length,
+                itemBuilder: (context, i) {
+                  final item = _completions[i] as Map;
+                  final label = item['label'] as String? ?? '';
+                  final detail = item['detail'] as String?;
+                  return ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    leading: const Icon(Icons.code, size: 14, color: Colors.tealAccent),
+                    title: Text(
+                      label,
+                      style: const TextStyle(
+                        fontFamily: _fontFamily,
+                        fontSize: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                    subtitle: detail != null
+                        ? Text(
+                            detail,
+                            style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          )
+                        : null,
+                    onTap: () => _applyCompletion(item),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_completionOverlay!);
+  }
+
+  void _hideCompletionOverlay() {
+    _completionOverlay?.remove();
+    _completionOverlay = null;
+    if (_completions.isNotEmpty && mounted) {
+      setState(() => _completions = []);
     }
   }
 
@@ -120,7 +227,7 @@ class EditorPaneState extends State<EditorPane> {
     _controller.selection = TextSelection.collapsed(offset: newOffset);
     _controller.addListener(_onTextChanged);
 
-    setState(() => _completions = []);
+    _hideCompletionOverlay();
 
     final lsp = _lsp;
     if (lsp != null) {
@@ -218,6 +325,7 @@ class EditorPaneState extends State<EditorPane> {
   void dispose() {
     _debounce?.cancel();
     _controller.removeListener(_onTextChanged);
+    _completionOverlay?.remove();
     _lsp?.dispose();
     _controller.dispose();
     super.dispose();
@@ -266,53 +374,21 @@ class EditorPaneState extends State<EditorPane> {
             ),
           ),
         Expanded(
-          child: SingleChildScrollView(
-            child: CodeTheme(
-              data: CodeThemeData(styles: monokaiSublimeTheme),
-              child: CodeField(
-                controller: _controller,
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                gutterStyle: const GutterStyle(width: 32, margin: 4),
-                textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          child: CompositedTransformTarget(
+            link: _editorLayerLink,
+            child: SingleChildScrollView(
+              child: CodeTheme(
+                data: CodeThemeData(styles: monokaiSublimeTheme),
+                child: CodeField(
+                  controller: _controller,
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  gutterStyle: const GutterStyle(width: 32, margin: 4),
+                  textStyle: const TextStyle(fontFamily: _fontFamily, fontSize: _fontSize),
+                ),
               ),
             ),
           ),
         ),
-        if (_completions.isNotEmpty)
-          Container(
-            constraints: const BoxConstraints(maxHeight: 180),
-            decoration: BoxDecoration(
-              color: const Color(0xFF272822),
-              border: Border(top: BorderSide(color: Colors.grey.shade800)),
-            ),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _completions.length,
-              itemBuilder: (context, i) {
-                final item = _completions[i] as Map;
-                final label = item['label'] as String? ?? '';
-                final detail = item['detail'] as String?;
-                return ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.code, size: 16, color: Colors.tealAccent),
-                  title: Text(
-                    label,
-                    style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 13, color: Colors.white),
-                  ),
-                  subtitle: detail != null
-                      ? Text(
-                          detail,
-                          style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        )
-                      : null,
-                  onTap: () => _applyCompletion(item),
-                );
-              },
-            ),
-          ),
       ],
     );
   }

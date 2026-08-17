@@ -149,8 +149,14 @@ class _IdeShellScreenState extends State<IdeShellScreen>
     final hasOpenTabs = _tabs.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
         title: Text(
-          hasOpenTabs ? _tabs[_tabController!.index].name : 'govin',
+          hasOpenTabs ? _breadcrumb(_tabs[_tabController!.index].path) : 'govin',
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
@@ -197,54 +203,62 @@ class _IdeShellScreenState extends State<IdeShellScreen>
               )
             : null,
       ),
-      body: Row(
-        children: [
-          SizedBox(
-            width: 120,
-            child: _FileTree(
-              currentPath: _currentPath,
-              entries: _entries,
-              loading: _loadingTree,
-              error: _treeError,
-              canGoUp: _pathStack.isNotEmpty,
-              onGoUp: _goUp,
-              onOpenDir: _openDir,
-              onOpenFile: _openFile,
-              onRetry: _loadTree,
-            ),
+      // File tree is a slide-over drawer (swipe from left edge, or tap the
+      // menu icon) instead of a persistent side panel — it covers the
+      // editor while open and disappears once a file is picked, so it
+      // never eats screen space while you're actually editing.
+      drawer: Drawer(
+        width: MediaQuery.of(context).size.width * 0.85,
+        child: SafeArea(
+          child: _FileTree(
+            currentPath: _currentPath,
+            entries: _entries,
+            loading: _loadingTree,
+            error: _treeError,
+            canGoUp: _pathStack.isNotEmpty,
+            onGoUp: _goUp,
+            onOpenDir: _openDir,
+            onOpenFile: (entry) {
+              _openFile(entry);
+              Navigator.of(context).pop(); // close drawer after picking a file
+            },
+            onRetry: _loadTree,
           ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: hasOpenTabs
-                ? TabBarView(
-                    controller: _tabController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: _tabs
-                        .map(
-                          (tab) => EditorPane(
-                            key: tab.key,
-                            host: widget.host,
-                            filePath: tab.path,
-                            onLspStatus: (status) {
-                              setState(() => tab.lspStatus = status);
-                            },
-                            onDiagnosticsCount: (count) {
-                              setState(() => tab.problemCount = count);
-                            },
-                          ),
-                        )
-                        .toList(),
-                  )
-                : const Center(
-                    child: Text(
-                      'Open a file from the tree to start editing',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-          ),
-        ],
+        ),
       ),
+      body: hasOpenTabs
+          ? TabBarView(
+              controller: _tabController,
+              physics: const NeverScrollableScrollPhysics(),
+              children: _tabs
+                  .map(
+                    (tab) => EditorPane(
+                      key: tab.key,
+                      host: widget.host,
+                      filePath: tab.path,
+                      onLspStatus: (status) {
+                        setState(() => tab.lspStatus = status);
+                      },
+                      onDiagnosticsCount: (count) {
+                        setState(() => tab.problemCount = count);
+                      },
+                    ),
+                  )
+                  .toList(),
+            )
+          : const Center(
+              child: Text(
+                'Open a file from the tree to start editing',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
     );
+  }
+
+  String _breadcrumb(String path) {
+    final parts = path.split('/').where((p) => p.isNotEmpty).toList();
+    if (parts.length <= 2) return parts.join(' › ');
+    return parts.sublist(parts.length - 2).join(' › ');
   }
 }
 
