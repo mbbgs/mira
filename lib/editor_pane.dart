@@ -47,6 +47,7 @@ class EditorPaneState extends State<EditorPane> {
   String get _fileUri => 'file://${widget.filePath}';
 
   final LayerLink _editorLayerLink = LayerLink();
+  final ScrollController _scrollController = ScrollController();
   OverlayEntry? _completionOverlay;
   Offset _completionOffset = Offset.zero;
 
@@ -62,8 +63,16 @@ class EditorPaneState extends State<EditorPane> {
     super.initState();
     _controller = CodeController(text: '', language: go);
     _controller.addListener(_onTextChanged);
+    _scrollController.addListener(_onScroll);
     _loadFile();
     _connectLsp();
+  }
+
+  void _onScroll() {
+    // Dismiss rather than reposition mid-scroll — simpler and matches
+    // how most mobile editors behave (Spck included: popup closes once
+    // you scroll away from the cursor).
+    if (_completionOverlay != null) _hideCompletionOverlay();
   }
 
   void _onTextChanged() {
@@ -137,7 +146,7 @@ class EditorPaneState extends State<EditorPane> {
     setState(() {
       _completionOffset = Offset(
         _gutterWidth + painter.width,
-        (pos.line + 1) * _lineHeight,
+        (pos.line + 1) * _lineHeight - _scrollController.offset,
       );
     });
   }
@@ -325,6 +334,8 @@ class EditorPaneState extends State<EditorPane> {
   void dispose() {
     _debounce?.cancel();
     _controller.removeListener(_onTextChanged);
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     _completionOverlay?.remove();
     _lsp?.dispose();
     _controller.dispose();
@@ -377,6 +388,7 @@ class EditorPaneState extends State<EditorPane> {
           child: CompositedTransformTarget(
             link: _editorLayerLink,
             child: SingleChildScrollView(
+              controller: _scrollController,
               child: CodeTheme(
                 data: CodeThemeData(styles: monokaiSublimeTheme),
                 child: CodeField(
